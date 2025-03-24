@@ -4,7 +4,7 @@ from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QCoreApplication, 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QGridLayout, QLabel, QHBoxLayout, QPushButton, QSizePolicy, QSlider, QWidget
 # from videoAnalysis_ui import UiMainWindow
-import cv2
+import cv2  # via opencv-python AND opencv-contrib-python (for other trackers)
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
@@ -15,8 +15,11 @@ import pyqtgraph as pg
 # > python -m PyInstaller main.py -n BobbingAnalysis
 # where -n specifies the resulting exe name
 
+# # Sources:
+# https://github.com/Google-Developer-Student-Clubs-Guelph/GDSCHacksOpenCVWorkshop
+# https://learnopencv.com/object-tracking-using-opencv-cpp-python/
 class VideoThread(QThread):
-    # https://gist.github.com/docPhil99/ca4da12c9d6f29b9cea137b617c7b8b1
+    # How to display opencv video in pyqt apps: https://gist.github.com/docPhil99/ca4da12c9d6f29b9cea137b617c7b8b1
     change_pixmap_signal = Signal(np.ndarray, int)
 
     def __init__(self, cap, tracker):
@@ -84,23 +87,23 @@ class UiMainWindow(object):
         font11Under.setUnderline(True)
 
         # Size policies
-        sizePolicy_Fixed = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        sizePolicy_Fixed = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         sizePolicy_Fixed.setHorizontalStretch(0)
         sizePolicy_Fixed.setVerticalStretch(0)
 
-        sizePolicy_Ex = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        sizePolicy_Ex = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         sizePolicy_Ex.setHorizontalStretch(0)
         sizePolicy_Ex.setVerticalStretch(0)
 
-        sizePolicy_minEx_max = QSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Maximum)
+        sizePolicy_minEx_max = QSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Maximum)
         sizePolicy_minEx_max.setHorizontalStretch(0)
         sizePolicy_minEx_max.setVerticalStretch(0)
 
-        sizePolicy_max = QSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        sizePolicy_max = QSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
         sizePolicy_max.setHorizontalStretch(0)
         sizePolicy_max.setVerticalStretch(0)
 
-        sizePolicy_preferred = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        sizePolicy_preferred = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         sizePolicy_preferred.setHorizontalStretch(0)
         sizePolicy_preferred.setVerticalStretch(0)
         # endregion Formatting templates
@@ -146,12 +149,12 @@ class UiMainWindow(object):
         self.timeStartLabel.setSizePolicy(sizePolicy_Fixed)
         self.timeStartLabel.setMinimumSize(QSize(84, 30))
         self.timeStartLabel.setMaximumSize(QSize(84, 30))
-        self.timeStartLabel.setAlignment(Qt.AlignCenter)
+        self.timeStartLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.trackingLayout.addWidget(self.timeStartLabel)
 
         self.trackingSlider = QSlider(self.centralwidget)
         self.trackingSlider.setObjectName(u"trackingSlider")
-        self.trackingSlider.setOrientation(Qt.Horizontal)
+        self.trackingSlider.setOrientation(Qt.Orientation.Horizontal)
         self.trackingSlider.setSizePolicy(sizePolicy_minEx_max)
         self.trackingSlider.setMaximumSize(QSize(16777215, 30))
         self.trackingLayout.addWidget(self.trackingSlider)
@@ -161,7 +164,7 @@ class UiMainWindow(object):
         self.timeEndLabel.setSizePolicy(sizePolicy_Fixed)
         self.timeEndLabel.setMinimumSize(QSize(84, 30))
         self.timeEndLabel.setMaximumSize(QSize(84, 30))
-        self.timeEndLabel.setAlignment(Qt.AlignCenter)
+        self.timeEndLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.trackingLayout.addWidget(self.timeEndLabel)
 
         self.frameForwardButton = QPushButton(self.centralwidget)
@@ -301,10 +304,10 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         # https://stackoverflow.com/questions/42833511/qt-how-to-create-image-that-scale-with-window-and-keeps-aspect-ratio
 
         # https://stackoverflow.com/questions/21041941/how-to-autoresize-qlabel-pixmap-keeping-ratio-without-using-classes/21053898#21053898
-        if event.type() == QEvent.Resize and widget is self.videoFrame:
+        if event.type() == QEvent.Type.Resize and widget is self.videoFrame:
             self.videoFrame.setPixmap(self.videoFrame.pixmap.scaled(self.videoFrame.width(), self.videoFrame.height(),
                                                                     Qt.AspectRatioMode.KeepAspectRatio,
-                                                                    Qt.SmoothTransformation))
+                                                                    Qt.TransformationMode.SmoothTransformation))
 
             # resize the window
             self.resize(self.sizeHint().width(), self.sizeHint().height())
@@ -423,6 +426,10 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
             self.tracker = cv2.legacy.TrackerMOSSE.create()
         if tracker_type == "CSRT":
             self.tracker = cv2.TrackerCSRT.create()
+        if tracker_type == "VIT":
+            self.tracker = cv2.TrackerVit.create()
+        if tracker_type == "RPN":
+            self.tracker = cv2.TrackerDaSiamRPN.create()
 
     def set_box(self):
         # self.bbox = (1261, 586, 60, 72)
@@ -524,7 +531,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         self.trackingSlider.setEnabled(False)
 
         # create the tracker
-        self.select_tracker("MOSSE")
+        self.select_tracker("MIL")
         _ = self.tracker.init(self.frameCurrent, self.bbox)
 
         # create the video capture thread
