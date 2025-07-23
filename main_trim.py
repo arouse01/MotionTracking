@@ -1,13 +1,13 @@
 import sys
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QCoreApplication, QMetaObject, QSize
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor, QBrush
 from PySide6.QtWidgets import (QGridLayout, QLabel, QHBoxLayout, QPushButton, QSizePolicy, QSlider, QWidget, QLineEdit,
                                QTableWidget, QHeaderView, QTableWidgetItem, QAbstractItemView, QStatusBar)
 # from videoAnalysis_ui import UiMainWindow
 import cv2  # via opencv-python AND opencv-contrib-python (for other trackers)
 import numpy as np
-# import pandas as pd
+import pandas as pd  # for exporting the trial times
 import subprocess
 import os
 # import pyqtgraph as pg
@@ -125,9 +125,9 @@ class UiMainWindow(object):
 
         """
         # Layout schematic
-        ┏━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━┓
-        ┃ pathLabel    │ pathTextEdit                                                      │ loadButton ┃
-        ┡━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━┩
+        ┏━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━┓
+        ┃ pathLabel    │ pathTextEdit                                │ loadButton          │ loadButton ┃
+        ┡━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┯━━━┷━━━━━━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━┩
         │ videoFrame                                             │ trialMarkerTable                     │
         │                                                        │                                      │
         ┢━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━╅───────────────────┬──────────────────┤
@@ -207,7 +207,7 @@ class UiMainWindow(object):
         self.trackingLayout = QHBoxLayout(self.centralwidget)
 
         self.timeStartLabel = QLabel(self.centralwidget)
-        self.timeStartLabel.setObjectName(u"timestampLabel")
+        self.timeStartLabel.setObjectName(u"startTimestampLabel")
         self.timeStartLabel.setSizePolicy(sizePolicy_Fixed)
         self.timeStartLabel.setMinimumSize(QSize(84, 30))
         self.timeStartLabel.setMaximumSize(QSize(84, 30))
@@ -222,7 +222,7 @@ class UiMainWindow(object):
         self.trackingLayout.addWidget(self.trackingSlider)
 
         self.timeEndLabel = QLabel(self.centralwidget)
-        self.timeEndLabel.setObjectName(u"timestampLabel")
+        self.timeEndLabel.setObjectName(u"endTimestampLabel")
         self.timeEndLabel.setSizePolicy(sizePolicy_Fixed)
         self.timeEndLabel.setMinimumSize(QSize(84, 30))
         self.timeEndLabel.setMaximumSize(QSize(84, 30))
@@ -332,8 +332,9 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
         self.loadButton.clicked.connect(self.load_video)
         self.trialMarkerTable.cellClicked.connect(self.select_trial)
-        self.trackingSlider.setTracking(False)
-        self.trackingSlider.valueChanged.connect(self.adjust_trackingslider)
+        self.trackingSlider.setTracking(True)
+        self.trackingSlider.valueChanged.connect(self.user_move_slider)
+        self.trackingSlider.sliderReleased.connect(self.adjust_trackingslider)
         self.addTrialButton.clicked.connect(self.trial_add)
         self.remTrialButton.clicked.connect(self.trial_rem)
         self.playVideoButton.clicked.connect(self.video_play)
@@ -389,6 +390,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
         self.videoPath = None
         self.videoName = None
+        self.videoExt = None
 
     def eventFilter(self, widget, event):
         # bug: after loading a frame, it resizes slightly, which fires the event, which resizes it,
@@ -419,7 +421,9 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         if fileName[0]:
             fileName = fileName[0]
             self.videoPath = fileName
+            self.pathText.setText(self.videoPath)
             self.videoName = os.path.splitext(os.path.split(self.videoPath)[1])[0]
+            self.videoExt = os.path.splitext(os.path.split(self.videoPath)[1])[1]
             self.cap = cv2.VideoCapture(fileName)
             if not self.cap.isOpened():
                 QtWidgets.QMessageBox.critical(self, "Error", "Could not read video file",
@@ -465,76 +469,20 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
                     self.videoFrame.installEventFilter(self)
 
-                    # self.traceGraph.setXRange(0, frame_count)
-                    # xPen = pg.mkPen(color=(60, 100, 160))
-                    # yPen = pg.mkPen(color=(160, 60, 60))
-                    # self.tlxLine = self.traceGraph.plot(self.tlFrame, self.tlxMid, pen=xPen)
-                    # self.tlyLine = self.traceGraph.plot(self.tlFrame, self.tlyMid, pen=yPen)
-                    # # self.tlChart = QtCharts.QChart()
-                    # # self.tlxLine = QtCharts.QLineSeries()
-                    # # self.tlyLine = QtCharts.QLineSeries()
-                    # #
-                    # # self.tlChart.addSeries(self.tlxLine)
-                    # # self.tlChart.addSeries(self.tlyLine)
-                    # #
-                    # # self.tlChartXAxis = QtCharts.QValueAxis()
-                    # # self.tlChartXAxis.setRange(0, frame_count)
-                    # #
-                    # # self.tlChartYAxis = QtCharts.QValueAxis()
-                    # # self.tlChartYAxis.setRange(0, self.vidHeight)
-                    # #
-                    # # self.tlChart.addAxis(self.tlChartXAxis, Qt.AlignmentFlag.AlignBottom)
-                    # # self.tlChart.addAxis(self.tlChartYAxis, Qt.AlignmentFlag.AlignLeft)
-                    # # self.traceGraph.setChart(self.tlChart)
-                    # #
-                    # # # test = QtCharts.QLineSeries()
-                    # # # test.append(0, 6)
-                    # # # test.append(1, 4)
-                    # # # test.append(3, 2)
-                    # # # test.append(4, 5)
-                    # # #
-                    # # self.tlChart.legend().hide()
-                    # #
-                    # # # self.tlChart.setTitle('test chart')
-                    # # # self.tlChart.addSeries(test)
-                    # # # self.traceGraph.setChart(self.tlChart)
-
-    # def select_tracker(self, tracker_type):
-    #
-    #     if tracker_type == 'BOOSTING':
-    #         self.tracker = cv2.legacy.TrackerBoosting.create()
-    #     if tracker_type == 'MIL':
-    #         self.tracker = cv2.TrackerMIL.create()
-    #     if tracker_type == 'KCF':
-    #         self.tracker = cv2.TrackerKCF.create()
-    #     if tracker_type == 'TLD':
-    #         self.tracker = cv2.legacy.TrackerTLD.create()
-    #     if tracker_type == 'MEDIANFLOW':
-    #         self.tracker = cv2.legacy.TrackerMedianFlow.create()
-    #     if tracker_type == 'GOTURN':
-    #         self.tracker = cv2.TrackerGOTURN.create()
-    #     if tracker_type == 'MOSSE':
-    #         self.tracker = cv2.legacy.TrackerMOSSE.create()
-    #     if tracker_type == "CSRT":
-    #         self.tracker = cv2.TrackerCSRT.create()
-    #     if tracker_type == "VIT":
-    #         self.tracker = cv2.TrackerVit.create()
-    #     if tracker_type == "RPN":
-    #         self.tracker = cv2.TrackerDaSiamRPN.create()
-
     def set_box(self):
         # self.bbox = (1261, 586, 60, 72)
         frameCopy = self.frameCurrent  # make a copy of the frame and add the rectangle to it rather than the original
 
         # set up instruction text
-        boxInstr = "Select object to track with left mouse button, press Enter when finished"
+        boxInstr = ["Select object to track with", "left mouse button, press", "Enter when finished"]
         font = cv2.FONT_HERSHEY_SIMPLEX
-        textSize = cv2.getTextSize(boxInstr, font, 1, 2)[0]
-        textX = textSize[1]  # (frameCopy.shape[1] - textSize[0]) / 2
-        textY = textSize[1] * 2
-        textOrg = (textX, textY)
-        cv2.putText(frameCopy, boxInstr, textOrg,
-                    font, 1, (0, 0, 255), 2)
+        for i, line in enumerate(boxInstr):
+            textSize = cv2.getTextSize(line, font, .8, 2)[0]
+            textX = textSize[1]  # (frameCopy.shape[1] - textSize[0]) / 2
+            textY = textSize[1] * 2 * (i+1)
+            textOrg = (textX, textY)
+            cv2.putText(frameCopy, line, textOrg,
+                        font, 1, (0, 0, 255), 2)
 
         # original frame size
         frameWidth = self.videoFrame.width()
@@ -581,7 +529,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
     def select_trial(self, row):
         self.trial = row
-        print(row)
+        # print(row)
 
     def trial_add(self):
         lastTrial = self.trialCount-1
@@ -589,13 +537,18 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         trialNumItem = QTableWidgetItem()
         trialNumItem.setData(Qt.DisplayRole, self.trialCount)
         self.trialMarkerTable.setItem(lastTrial, 0, trialNumItem)
+        # fill remaining cells with an actual item
+        self.trialMarkerTable.setItem(lastTrial, 1, QTableWidgetItem())
+        self.trialMarkerTable.setItem(lastTrial, 2, QTableWidgetItem())
         self.trialCount += 1
 
     def trial_rem(self):
         if self.trialCount > 1:
             self.trialMarkerTable.removeRow(self.trial)
             self.trialCount -= 1
-            # TODO: renumber trials after deletion
+            # renumber trials after deletion
+            for row in range(self.trialCount-1):  # trialCount - 1 because trialCount is not 0-indexed
+                self.trialMarkerTable.item(row, 0).setData(Qt.DisplayRole, row+1)
 
     # def update_table(self):
     #     self.trialMarkerTable
@@ -624,7 +577,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         self.frameCurrentNumber = target_frame
 
     def adjust_trackingslider(self):
-        # move the tracking slider directly
+        # move the tracking slider directly, load the frame at the slider position
         targetFrame = self.trackingSlider.value()
         newTimeStamp = self.get_time_from_frame(targetFrame)
         self.timeStartLabel.setText(newTimeStamp)
@@ -636,35 +589,90 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         # self.thread.select(self.frameCurrentNumber)
         # self.load_frame(self.frameCurrentNumber)
 
+    def user_move_slider(self):
+        # update the timestamp based on slider position without loading a new frame (while dragging the slider)
+        targetFrame = self.trackingSlider.value()
+        newTimeStamp = self.get_time_from_frame(targetFrame)
+        self.timeStartLabel.setText(newTimeStamp)
+
     def split_video(self):
-        folderPath = QtWidgets.QFileDialog.getExistingDirectory(self, 'Save to Folder')
-        if folderPath[0]:
-            # make the output folder, if not present
-            # TODO: Validate that all trials have start and end before trying to clip/crop them
-            # loop through trials and export cropped clips
-            trialCount = self.trialMarkerTable.rowCount()
-            for row in range(trialCount):
-                trialN = self.trialMarkerTable.item(row, 0).text()
-                start = self.trialMarkerTable.item(row, 1).text()
-                end = self.trialMarkerTable.item(row, 2).text()
 
-                currFileName = self.videoName + "_t" + trialN
-                output_path = os.path.join(folderPath, currFileName)
+        brushHighlight = QBrush(QColor('yellow'))
+        brushReg = QBrush(QColor('white'))
 
-                if self.bbox and all(x > 0 for x in self.bbox):
-                    # video is cropped
-                    command = (
-                        f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
-                        f"-filter:v crop={self.cropWidth}:{self.cropHeight}:{self.cropX}:{self.cropY} "
-                        f'-c:a copy "{output_path}"'
-                    )
-                else:
-                    command = (
-                        f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
-                        f'-c:a copy "{output_path}"'
-                    )
-                self.statusbar.showMessage(f'Clipping trial "{trialN}" of "{trialCount}"')
-                subprocess.call(command, shell=True)
+        trialCount = self.trialMarkerTable.rowCount()
+        # Validate that all trials have start and end before trying to clip/crop them
+        trialsValid = True
+        for row in range(trialCount):
+            trialNItem = self.trialMarkerTable.item(row, 0)
+            startItem = self.trialMarkerTable.item(row, 1)
+            endItem = self.trialMarkerTable.item(row, 2)
+            if not trialNItem.text():
+                # self.statusbar.showMessage(f'Row {row + 1} missing trial number')
+                trialsValid = False
+                trialNItem.setBackground(brushHighlight)
+            else:
+                trialNItem.setBackground(brushReg)
+            if not startItem.text():
+                # self.statusbar.showMessage(f'Row {row+1} missing start time')
+                trialsValid = False
+                startItem.setBackground(brushHighlight)
+            else:
+                startItem.setBackground(brushReg)
+            if not endItem.text():
+                # self.statusbar.showMessage(f'Row {row+1} missing end time')
+                trialsValid = False
+                endItem.setBackground(brushHighlight)
+            else:
+                endItem.setBackground(brushReg)
+
+        if trialsValid:
+            folderPath = QtWidgets.QFileDialog.getExistingDirectory(self, 'Save to Folder')
+            if folderPath:
+                # loop through trials and export cropped clips
+                columnHeaders = ['Trial', 'Start', 'End']
+                trialdf = pd.DataFrame(columns=columnHeaders, index=range(trialCount))
+                for row in range(trialCount):
+                    trialN = self.trialMarkerTable.item(row, 0).text()
+                    start = self.trialMarkerTable.item(row, 1).text()
+                    end = self.trialMarkerTable.item(row, 2).text()
+                    trialdf.loc[row, 'Trial'] = trialN
+                    trialdf[row, 'Start'] = start
+                    trialdf[row, 'End'] = end
+
+                    currFileName = self.videoName + "_t" + trialN + self.videoExt
+                    output_path = os.path.join(folderPath, currFileName)
+
+                    if self.bbox and all(x > 0 for x in self.bbox):
+                        # video is cropped
+                        # TODO: add verification that ffmpeg is installed
+                        command = (
+                            f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
+                            f"-filter:v crop={self.cropWidth}:{self.cropHeight}:{self.cropX}:{self.cropY} "
+                            f'-c:a copy "{output_path}"'
+                        )
+                    else:
+                        command = (
+                            f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
+                            f'-c:a copy "{output_path}"'
+                        )
+                    self.statusbar.showMessage(f'Clipping trial {trialN} of {trialCount}')
+                    print(f'Clipping trial {trialN} of {trialCount}')
+                    subprocess.call(command, shell=True)
+                self.statusbar.showMessage(f'')
+
+                # cropping box
+                bboxdf = pd.DataFrame({'cropX': [self.cropX], 'cropY': [self.cropY],
+                                       'cropWidth': [self.cropWidth], 'cropHeight': [self.cropHeight]})
+                outdf = pd.concat([trialdf, bboxdf], ignore_index=True)
+
+                # export trial times and names
+                textFileName = self.videoName + "_trialTimes.csv"
+                output_path = os.path.join(folderPath, textFileName)
+                outdf.to_csv(output_path, index=False)
+
+        else:
+            self.statusbar.showMessage(f'Missing trial data')
 
     def video_play(self):
         # update the play button
@@ -719,56 +727,11 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         return QtGui.QPixmap.fromImage(p)
 
     def update_tracker(self, frame, frame_number):
-        # now update the tracker
-        # frameGray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        # # blur = cv2.GaussianBlur(videoGray, (5, 5), 0)
-        # ret, thresh = cv2.threshold(frameGray, 0, 255, cv2.THRESH_BINARY)
+
         if frame_number <= int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)):
-
-            # # Start timer
-            # timer = cv2.getTickCount()
-
-            # # Update tracker
-            # ok, self.bbox = self.tracker.update(frame)
-            #
-            # # # Calculate Frames per second (FPS)
-            # # fps = cv2.getTickFrequency() / (cv2.getTickCount() - timer)
-            #
-            # # Draw bounding box
-            # if ok:
-            #     # Tracking success
-            #     p1 = (int(self.bbox[0]), int(self.bbox[1]))
-            #     p2 = (int(self.bbox[0] + self.bbox[2]), int(self.bbox[1] + self.bbox[3]))
-            #     self.tlx1[frame_number] = int(self.bbox[0])
-            #     self.tlx2[frame_number] = int(self.bbox[0] + self.bbox[2])
-            #     self.tly1[frame_number] = self.vidHeight - int(self.bbox[1])
-            #     self.tly2[frame_number] = self.vidHeight - int(self.bbox[1] + self.bbox[3])
-            #     self.tlxMid[frame_number] = int(self.bbox[1] + self.bbox[3] / 2)
-            #     self.tlyMid[frame_number] = int(self.bbox[0] + self.bbox[2] / 2)
-            #     # row = [frameCount, bbox[0], bbox[1], bbox[2], bbox[3]]
-            #     # boxLog.append(row)
-            #     # xMid = int(self.bbox[0] + self.bbox[2] / 2)
-            #     # yMid = int(self.bbox[1] + self.bbox[3] / 2)
-            #     cv2.rectangle(frame, p1, p2, (255, 0, 0), 2, 1)
-            #
-            #     self.tlxLine.setData(self.tlFrame, self.tlxMid)
-            #     self.tlyLine.setData(self.tlFrame, self.tlyMid)
-            #
-            #     # self.traceGraph.update()
-            #
-            # else:
-            #     # Tracking failure
-            #     cv2.putText(frame, "Tracking failure detected", (100, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
-            #                 (0, 0, 255), 2)
-            #
-            # # Display tracker type on frame
-            # cv2.putText(frame, "Frame: " + str(int(frame_number)), (100, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
-            #             (50, 170, 50), 2)
 
             # Display result
             self.update_image(frame, frame_number)
-
-            # Update chart
 
     def get_time_from_frame(self, framenumber):
         # return time as string (with commented lines for returning as datetime)

@@ -1,3 +1,5 @@
 main_yolo.py
 modelTrain.py
 splitter.ui
+build/*
+dist/*
