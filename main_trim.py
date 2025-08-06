@@ -4,7 +4,7 @@ from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QCoreApplication, 
 from PySide6.QtGui import QColor, QBrush  # , QFont
 from PySide6.QtWidgets import (QGridLayout, QLabel, QHBoxLayout, QPushButton, QSizePolicy, QSlider, QWidget, QLineEdit,
                                QTableWidget, QHeaderView, QTableWidgetItem, QAbstractItemView, QStatusBar, QSpinBox,
-                               QAbstractSpinBox, QFrame)
+                               QAbstractSpinBox, QFrame, QMessageBox)
 
 import cv2  # via opencv-python AND opencv-contrib-python (for other trackers)
 import numpy as np
@@ -23,9 +23,65 @@ import pyqtgraph as pg  # for graphing the audio
 # > python -m PyInstaller main.py -n BobbingAnalysis
 # where -n specifies the resulting exe name
 
-# # Sources:
-# https://github.com/Google-Developer-Student-Clubs-Guelph/GDSCHacksOpenCVWorkshop
-# https://learnopencv.com/object-tracking-using-opencv-cpp-python/
+def get_seconds_from_time(time_str):
+    time = time_str.split(":")
+    if len(time) > 2:
+        # timestamp includes hours
+        nSec = float(time[0]) * 60 * 60 + float(time[1]) * 60 + float(time[2])
+    else:
+        # timestamp is just minutes and seconds
+        nSec = float(time[0]) * 60 + float(time[1])
+
+    return nSec
+
+
+def check_ffmpeg_installed():
+    """
+    Checks if FFmpeg is installed and accessible by trying to run 'ffmpeg -version'.
+    Returns True if FFmpeg is found, False otherwise.
+    """
+    try:
+        # Run the ffmpeg -version command
+        # stdout=subprocess.PIPE captures the output
+        # stderr=subprocess.PIPE captures error messages
+        # check=True raises CalledProcessError if the command returns a non-zero exit code
+        subprocess.run(['ffmpeg', '-version'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        message = "FFmpeg is installed and accessible."
+        print(message)
+        return True, message
+    except FileNotFoundError:
+        message = "FFmpeg is not found in the system's PATH."
+        print(message)
+        return False, message
+    except subprocess.CalledProcessError as e:
+        message = f"FFmpeg command failed with error: {e} Stderr: {e.stderr.decode()}"
+        print(message)
+        return False, message
+    except Exception as e:
+        message = f"An unexpected error occurred: {e}"
+        print(message)
+        return False, message
+
+
+def get_audio_fs(video_path):
+    """Moviepy does not properly return the audio sample rate - instead it returns the resampled rate, which
+    usually defaults to 44.1kHz.  This process gets the actual sample rate, although it is somewhat complex"""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate",
+            "-of", "json",
+            video_path
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    info = json.loads(result.stdout)
+    return int(info['streams'][0]['sample_rate'])
+
+
 class VideoThread(QThread):
     # How to display opencv video in pyqt apps: https://gist.github.com/docPhil99/ca4da12c9d6f29b9cea137b617c7b8b1
     change_pixmap_signal = Signal(np.ndarray, int)
@@ -236,6 +292,7 @@ class UiMainWindow(object):
         self.videoFrame.setScaledContents(False)
         self.videoFrame.setMinimumSize(QSize(600, 600))
         self.videoFrame.setMaximumSize(QSize(1800, 1800))
+        self.videoFrame.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         self.controlGridLayout.addWidget(self.videoFrame, 1, 0, 2, 1)
 
         self.audioFrame = pg.PlotWidget()
@@ -431,25 +488,6 @@ class UiMainWindow(object):
     # retranslateUi
 
 
-def get_audio_fs(video_path):
-    """Moviepy does not properly return the audio sample rate - instead it returns the resampled rate, which
-    usually defaults to 44.1kHz.  This process gets the actual sample rate, although it is somewhat complex"""
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-select_streams", "a:0",
-            "-show_entries", "stream=sample_rate",
-            "-of", "json",
-            video_path
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    info = json.loads(result.stdout)
-    return int(info['streams'][0]['sample_rate'])
-
-
 class FFmpegClipExporter(QThread):
     """With assistance from ChatGPT. Using filter_complex in ffmpeg to split multiple, cropped clips from a single
     video without reinitializing ffmpeg each time"""
@@ -514,18 +552,6 @@ class FFmpegClipExporter(QThread):
             args += ["-map", f"[v{i}out]", "-map", f"[a{i}out]", out]
 
         return args
-
-
-def get_seconds_from_time(time_str):
-    time = time_str.split(":")
-    if len(time) > 2:
-        # timestamp includes hours
-        nSec = float(time[0]) * 60 * 60 + float(time[1]) * 60 + float(time[2])
-    else:
-        # timestamp is just minutes and seconds
-        nSec = float(time[0]) * 60 + float(time[1])
-
-    return nSec
 
 
 class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
@@ -622,7 +648,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
         self.trialdf = None
         self.folderPath = None
-        self.currRow = None
+        # self.currRow = None
         self.nFrames = None
 
         if self.progressBar:
@@ -632,6 +658,20 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', 'k')
+
+        self.ffmpegInstalled, message = check_ffmpeg_installed()
+        self.statusbar.showMessage(message)
+        if not self.ffmpegInstalled:
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            message = (
+                "ffmpeg is not detected."
+                "Trials can be identified but cannot be split into individual files."
+            )
+            msg_box.setText(message)
+            msg_box.setWindowTitle("ffmpeg missing")
+            msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg_box.exec()  # Displays the message box and waits for user interaction
 
     def eventFilter(self, widget, event):
         # bug: after loading a frame, it resizes slightly, which fires the event, which resizes it,
@@ -645,8 +685,8 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                                                                     Qt.AspectRatioMode.KeepAspectRatio,
                                                                     Qt.TransformationMode.SmoothTransformation))
 
-            # resize the window
-            self.resize(self.sizeHint().width(), self.sizeHint().height())
+            # # resize the window
+            # self.resize(self.sizeHint().width(), self.sizeHint().height())
             return True
         return QtWidgets.QMainWindow.eventFilter(self, widget, event)
 
@@ -722,17 +762,6 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 self.boundingBottomSpinBox.setMaximum(self.vidHeight)
 
                 # display audio
-                # OLD METHOD - pyav is too slow because it's optimized for reading audio packets rather than bulk import
-                # with av.open(self.videoPath) as container:
-                #     audio_stream = next(s for s in container.streams if s.type == 'audio')
-                #     audio_frames = []
-                #
-                #     fs = audio_stream.sample_rate
-                #
-                #     for packet in container.demux(audio_stream):
-                #         for frame in packet.decode():
-                #             audio_frames.append(frame.to_ndarray())
-                # waveform = np.concatenate(audio_frames, axis=1)
                 videoClip = VideoFileClip(self.videoPath)
                 fs = get_audio_fs(self.videoPath)
                 print(f'Audio sample rate (Hz): {fs}')
@@ -748,8 +777,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 self.audioTrackerLine = pg.InfiniteLine(0, pen=pg.mkPen('y', width=1))
                 self.audioFrame.addItem(self.audioTrackerLine)
 
-                # self.audioTrackerLine = self.audioFrame.plot([0, 0], [-10, 10], pen=pg.mkPen('y', width=1))
-
+                # EventFilter resizes the frame as the window resizes
                 self.videoFrame.installEventFilter(self)
 
                 return True
@@ -1096,9 +1124,23 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
                 # export trial times and names
                 textFileName = self.videoName + "_trialTimes.csv"
-                output_path = os.path.join(self.folderPath, textFileName)
-                outdf.to_csv(output_path, index=False)
+                outputPath = os.path.join(self.folderPath, textFileName)
+                outdf.to_csv(outputPath, index=False)
 
+                # again, if ffmpeg is missing, alert user but inform that parameter file was saved
+                if not self.ffmpegInstalled:
+                    msg_box = QMessageBox()
+                    msg_box.setIcon(QMessageBox.Icon.Warning)
+                    message = (
+                        f"Trials have been saved to a settings file ({outputPath}), "
+                        "but splitting requires ffmpeg. Once ffmpeg is installed you can reload the settings file "
+                        "and try again."
+                    )
+                    msg_box.setText(message)
+                    msg_box.setWindowTitle("ffmpeg missing")
+                    msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                    msg_box.exec()  # Displays the message box and waits for user interaction
+                    return
                 self.trackingSlider.setEnabled(False)
                 self.playVideoButton.setEnabled(False)
                 self.boundingLeftSpinBox.setEnabled(False)
@@ -1118,7 +1160,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 # start clipping
                 if self.progressBar:
                     self.progressBar.show()
-                self.currRow = 0
+                # self.currRow = 0
                 self.start_clip_video()
 
         else:
