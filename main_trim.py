@@ -1,10 +1,10 @@
 import sys
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QCoreApplication, QMetaObject, QSize, QProcess
-from PySide6.QtGui import QFont, QColor, QBrush
+from PySide6.QtGui import QColor, QBrush  # , QFont
 from PySide6.QtWidgets import (QGridLayout, QLabel, QHBoxLayout, QPushButton, QSizePolicy, QSlider, QWidget, QLineEdit,
                                QTableWidget, QHeaderView, QTableWidgetItem, QAbstractItemView, QStatusBar, QSpinBox,
-                               QAbstractSpinBox, QFrame, QProgressBar)
+                               QAbstractSpinBox, QFrame)
 
 import cv2  # via opencv-python AND opencv-contrib-python (for other trackers)
 import numpy as np
@@ -101,19 +101,19 @@ class UiMainWindow(object):
     def setup_ui(self, mainwindow):
         # region Formatting templates
         # Text formatting
-        font10 = QFont()
-        font10.setPointSize(10)
-        font11 = QFont()
-        font11.setPointSize(11)
-        font11Bold = QFont()
-        font11Bold.setPointSize(11)
-        font11Bold.setBold(True)
-        font12Bold = QFont()
-        font12Bold.setPointSize(12)
-        font12Bold.setBold(True)
-        font11Under = QFont()
-        font11Under.setPointSize(11)
-        font11Under.setUnderline(True)
+        # font10 = QFont()
+        # font10.setPointSize(10)
+        # font11 = QFont()
+        # font11.setPointSize(11)
+        # font11Bold = QFont()
+        # font11Bold.setPointSize(11)
+        # font11Bold.setBold(True)
+        # font12Bold = QFont()
+        # font12Bold.setPointSize(12)
+        # font12Bold.setBold(True)
+        # font11Under = QFont()
+        # font11Under.setPointSize(11)
+        # font11Under.setUnderline(True)
 
         # Size policies
         sizePolicy_Fixed = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -182,11 +182,12 @@ class UiMainWindow(object):
 
         self.statusbar = QStatusBar()
 
-        self.progressBar = QProgressBar(self.centralwidget)
-        self.progressBar.setMinimum(0)
-        self.progressBar.setMaximum(100)
-        self.progressBar.setValue(0)  # Initial value
-        self.statusbar.addPermanentWidget(self.progressBar)
+        # self.progressBar = QProgressBar(self.centralwidget)
+        # self.progressBar.setMinimum(0)
+        # self.progressBar.setMaximum(100)
+        # self.progressBar.setValue(0)  # Initial value
+        # self.statusbar.addPermanentWidget(self.progressBar)
+
         mainwindow.setStatusBar(self.statusbar)
 
         self.controlGridLayout = QGridLayout(self.centralwidget)
@@ -197,15 +198,14 @@ class UiMainWindow(object):
         self.loadVideoButton = QPushButton(self.centralwidget)
         self.loadVideoButton.setObjectName(u"loadButton")
         self.loadVideoButton.setSizePolicy(sizePolicy_Fixed)
-        self.loadVideoButton.setMinimumSize(QSize(84, 24))
-        self.loadVideoButton.setMaximumSize(QSize(84, 24))
+        self.loadVideoButton.setFixedSize(QSize(84, 24))
         self.fileLayout.addWidget(self.loadVideoButton)
 
         self.pathLabel = QLabel(self.centralwidget)
         self.pathLabel.setObjectName(u"pathLabel")
         self.pathLabel.setSizePolicy(sizePolicy_minEx_max)
-        self.pathLabel.setMinimumSize(QSize(50, 24))
-        self.pathLabel.setMaximumHeight(24)
+        self.pathLabel.setMinimumWidth(50)
+        self.pathLabel.setFixedHeight(24)
         self.pathLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.fileLayout.addWidget(self.pathLabel)
 
@@ -222,8 +222,8 @@ class UiMainWindow(object):
         self.loadParamButton = QPushButton(self.centralwidget)
         self.loadParamButton.setObjectName(u"pathLabel")
         self.loadParamButton.setSizePolicy(sizePolicy_minEx_max)
-        self.loadParamButton.setMinimumSize(QSize(50, 24))
-        self.loadParamButton.setMaximumHeight(24)
+        self.loadParamButton.setMinimumWidth(50)
+        self.loadParamButton.setFixedHeight(24)
         self.controlGridLayout.addWidget(self.loadParamButton, 0, 1, 1, 2)
 
         self.videoFrame = QLabel(self.centralwidget)
@@ -242,8 +242,7 @@ class UiMainWindow(object):
         self.audioFrame.setObjectName(u"audioFrame")
         self.audioFrame.setSizePolicy(sizePolicy_minEx_max)
         # self.audioFrame.setScaledContents(False)
-        self.audioFrame.setMinimumHeight(100)
-        self.audioFrame.setMaximumHeight(100)
+        self.audioFrame.setFixedHeight(100)
         self.audioFrame.hideAxis('bottom')
         self.audioFrame.hideAxis('left')
         self.audioFrame.setMouseEnabled(x=False, y=False)
@@ -260,16 +259,14 @@ class UiMainWindow(object):
         self.boundingLeftLabel = QLabel(self.centralwidget)
         self.boundingLeftLabel.setObjectName(u"boundingLeftLabel")
         self.boundingLeftLabel.setSizePolicy(sizePolicy_Fixed)
-        self.boundingLeftLabel.setMinimumSize(QSize(50, 24))
-        self.boundingLeftLabel.setMaximumSize(QSize(50, 24))
+        self.boundingLeftLabel.setFixedSize(QSize(50, 24))
         self.boundingLeftLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.boundingGridLayout.addWidget(self.boundingLeftLabel, 0, 0, 1, 1)
 
         self.boundingLeftSpinBox = QSpinBox(self.centralwidget)
         self.boundingLeftSpinBox.setObjectName(u"boundingLeftSpinBox")
         self.boundingLeftSpinBox.setSizePolicy(sizePolicy_Fixed)
-        self.boundingLeftSpinBox.setMinimumSize(QSize(60, 24))
-        self.boundingLeftSpinBox.setMaximumSize(QSize(60, 24))
+        self.boundingLeftSpinBox.setFixedSize(QSize(60, 24))
         self.boundingLeftSpinBox.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.boundingLeftSpinBox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.boundingGridLayout.addWidget(self.boundingLeftSpinBox, 0, 1, 1, 1)
@@ -277,16 +274,14 @@ class UiMainWindow(object):
         self.boundingRightLabel = QLabel(self.centralwidget)
         self.boundingRightLabel.setObjectName(u"boundingRightLabel")
         self.boundingRightLabel.setSizePolicy(sizePolicy_Fixed)
-        self.boundingRightLabel.setMinimumSize(QSize(50, 24))
-        self.boundingRightLabel.setMaximumSize(QSize(50, 24))
+        self.boundingRightLabel.setFixedSize(QSize(50, 24))
         self.boundingRightLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.boundingGridLayout.addWidget(self.boundingRightLabel, 0, 2, 1, 1)
 
         self.boundingRightSpinBox = QSpinBox(self.centralwidget)
         self.boundingRightSpinBox.setObjectName(u"boundingRightSpinBox")
         self.boundingRightSpinBox.setSizePolicy(sizePolicy_Fixed)
-        self.boundingRightSpinBox.setMinimumSize(QSize(60, 24))
-        self.boundingRightSpinBox.setMaximumSize(QSize(60, 24))
+        self.boundingRightSpinBox.setFixedSize(QSize(60, 24))
         self.boundingRightSpinBox.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.boundingRightSpinBox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.boundingGridLayout.addWidget(self.boundingRightSpinBox, 0, 3, 1, 1)
@@ -294,16 +289,14 @@ class UiMainWindow(object):
         self.boundingTopLabel = QLabel(self.centralwidget)
         self.boundingTopLabel.setObjectName(u"boundingTopLabel")
         self.boundingTopLabel.setSizePolicy(sizePolicy_Fixed)
-        self.boundingTopLabel.setMinimumSize(QSize(50, 24))
-        self.boundingTopLabel.setMaximumSize(QSize(50, 24))
+        self.boundingTopLabel.setFixedSize(QSize(50, 24))
         self.boundingTopLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.boundingGridLayout.addWidget(self.boundingTopLabel, 1, 0, 1, 1)
 
         self.boundingTopSpinBox = QSpinBox(self.centralwidget)
         self.boundingTopSpinBox.setObjectName(u"boundingTopSpinBox")
         self.boundingTopSpinBox.setSizePolicy(sizePolicy_Fixed)
-        self.boundingTopSpinBox.setMinimumSize(QSize(60, 24))
-        self.boundingTopSpinBox.setMaximumSize(QSize(60, 24))
+        self.boundingTopSpinBox.setFixedSize(QSize(60, 24))
         self.boundingTopSpinBox.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.boundingTopSpinBox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.boundingGridLayout.addWidget(self.boundingTopSpinBox, 1, 1, 1, 1)
@@ -311,16 +304,14 @@ class UiMainWindow(object):
         self.boundingBottomLabel = QLabel(self.centralwidget)
         self.boundingBottomLabel.setObjectName(u"boundingBottomLabel")
         self.boundingBottomLabel.setSizePolicy(sizePolicy_Fixed)
-        self.boundingBottomLabel.setMinimumSize(QSize(50, 24))
-        self.boundingBottomLabel.setMaximumSize(QSize(50, 24))
+        self.boundingBottomLabel.setFixedSize(QSize(50, 24))
         self.boundingBottomLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.boundingGridLayout.addWidget(self.boundingBottomLabel, 1, 2, 1, 1)
 
         self.boundingBottomSpinBox = QSpinBox(self.centralwidget)
         self.boundingBottomSpinBox.setObjectName(u"boundingBottomSpinBox")
         self.boundingBottomSpinBox.setSizePolicy(sizePolicy_Fixed)
-        self.boundingBottomSpinBox.setMinimumSize(QSize(60, 24))
-        self.boundingBottomSpinBox.setMaximumSize(QSize(60, 24))
+        self.boundingBottomSpinBox.setFixedSize(QSize(60, 24))
         self.boundingBottomSpinBox.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.boundingBottomSpinBox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.boundingGridLayout.addWidget(self.boundingBottomSpinBox, 1, 3, 1, 1)
@@ -328,8 +319,7 @@ class UiMainWindow(object):
         self.boundingBoxButton = QPushButton(self.centralwidget)
         self.boundingBoxButton.setObjectName(u"boundingBoxButton")
         self.boundingBoxButton.setSizePolicy(sizePolicy_minEx_max)
-        self.boundingBoxButton.setMinimumHeight(24)
-        self.boundingBoxButton.setMaximumHeight(24)
+        self.boundingBoxButton.setFixedHeight(24)
         self.boundingGridLayout.addWidget(self.boundingBoxButton, 2, 0, 1, 4)
 
         self.controlGridLayout.addWidget(self.boundingGridFrame, 1, 1, 1, 2)
@@ -346,8 +336,7 @@ class UiMainWindow(object):
         self.timeStartTextEdit = QLineEdit(self.centralwidget)
         self.timeStartTextEdit.setObjectName(u"startTimestampLabel")
         self.timeStartTextEdit.setSizePolicy(sizePolicy_Fixed)
-        self.timeStartTextEdit.setMinimumSize(QSize(84, 30))
-        self.timeStartTextEdit.setMaximumSize(QSize(84, 30))
+        self.timeStartTextEdit.setFixedSize(QSize(84, 30))
         self.timeStartTextEdit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.trackingLayout.addWidget(self.timeStartTextEdit)
 
@@ -355,14 +344,13 @@ class UiMainWindow(object):
         self.trackingSlider.setObjectName(u"trackingSlider")
         self.trackingSlider.setOrientation(Qt.Orientation.Horizontal)
         self.trackingSlider.setSizePolicy(sizePolicy_minEx_max)
-        self.trackingSlider.setMaximumSize(QSize(16777215, 30))
+        self.trackingSlider.setMaximumHeight(30)
         self.trackingLayout.addWidget(self.trackingSlider)
 
         self.timeEndLabel = QLabel(self.centralwidget)
         self.timeEndLabel.setObjectName(u"endTimestampLabel")
         self.timeEndLabel.setSizePolicy(sizePolicy_Fixed)
-        self.timeEndLabel.setMinimumSize(QSize(84, 30))
-        self.timeEndLabel.setMaximumSize(QSize(84, 30))
+        self.timeEndLabel.setFixedSize(QSize(84, 30))
         self.timeEndLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.trackingLayout.addWidget(self.timeEndLabel)
 
@@ -393,43 +381,24 @@ class UiMainWindow(object):
         self.addTrialButton = QPushButton(self.centralwidget)
         self.addTrialButton.setObjectName(u"addTrialButton")
         self.addTrialButton.setSizePolicy(sizePolicy_minEx_max)
-        self.addTrialButton.setMinimumHeight(30)
-        self.addTrialButton.setMaximumSize(QSize(120, 30))
+        self.addTrialButton.setFixedHeight(30)
+        self.addTrialButton.setMaximumWidth(120)
         self.controlGridLayout.addWidget(self.addTrialButton, 4, 1, 1, 1)
 
         self.remTrialButton = QPushButton(self.centralwidget)
         self.remTrialButton.setObjectName(u"remTrialButton")
         self.remTrialButton.setSizePolicy(sizePolicy_minEx_max)
-        self.remTrialButton.setMinimumHeight(30)
-        self.remTrialButton.setMaximumSize(QSize(120, 30))
+        self.remTrialButton.setFixedHeight(30)
+        self.remTrialButton.setMaximumWidth(120)
         self.controlGridLayout.addWidget(self.remTrialButton, 4, 2, 1, 1)
 
         self.saveTraceButton = QPushButton(self.centralwidget)
         self.saveTraceButton.setObjectName(u"saveTraceButton")
         self.saveTraceButton.setSizePolicy(sizePolicy_minEx_max)
-        self.saveTraceButton.setMinimumHeight(30)
-        self.saveTraceButton.setMaximumHeight(30)
+        self.saveTraceButton.setFixedHeight(30)
         self.controlGridLayout.addWidget(self.saveTraceButton, 5, 1, 1, 2)
 
-        # self.traceGraph = pg.PlotWidget()  # QtCharts.QChartView(self.centralwidget)
-        # self.traceGraph.setObjectName(u"traceGraph")
-        # self.traceGraph.setMinimumHeight(50)
-        # self.traceGraph.setMaximumHeight(150)
-        # self.traceGraph.setSizePolicy(sizePolicy_minEx_max)
-        # self.traceGraph.setBackground("w")
-        # self.traceGraph.getPlotItem().hideAxis('bottom')
-        # self.traceGraph.getPlotItem().hideAxis('left')
-        # self.traceGraph.setMouseEnabled(x=False, y=False)  # Disable mouse panning & zooming
-        # self.traceGraph.hideButtons()  # Disable corner auto-scale button
-        # self.traceGraph.getPlotItem().setMenuEnabled(False)  # Disable right-click context menu
-        #
-        # self.controlGridLayout.addWidget(self.traceGraph, 3, 0, 2, 5)
-
         mainwindow.setCentralWidget(self.centralwidget)
-
-        # self.statusbar = QStatusBar(mainwindow)
-        # self.statusbar.setObjectName(u"statusbar")
-        # mainwindow.setStatusBar(self.statusbar)
 
         self.retranslate_ui(mainwindow)
 
@@ -495,6 +464,7 @@ class FFmpegClipExporter(QThread):
         self.output_paths = output_paths  # list of output filenames
         self.process = None
 
+    # noinspection PyUnresolvedReferences
     def run(self):
         self.process = QProcess()
         self.process.setProcessChannelMode(QProcess.MergedChannels)
@@ -655,7 +625,8 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         self.currRow = None
         self.nFrames = None
 
-        self.progressBar.hide()
+        if self.progressBar:
+            self.progressBar.hide()
 
         self.exporter = None
 
@@ -1145,7 +1116,8 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 self.loadParamButton.setEnabled(False)
                 
                 # start clipping
-                # self.progressBar.show()
+                if self.progressBar:
+                    self.progressBar.show()
                 self.currRow = 0
                 self.start_clip_video()
 
@@ -1185,7 +1157,8 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         msg = "Export complete!" if success else "Export failed!"
         self.statusbar.showMessage(msg)
 
-        self.progressBar.hide()
+        if self.progressBar:
+            self.progressBar.hide()
         self.trackingSlider.setEnabled(True)
         self.playVideoButton.setEnabled(True)
         self.boundingLeftSpinBox.setEnabled(True)
