@@ -1,19 +1,21 @@
 import sys
 from PySide6 import QtWidgets, QtGui
-from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QCoreApplication, QMetaObject, QSize
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QCoreApplication, QMetaObject, QSize, QProcess
 from PySide6.QtGui import QFont, QColor, QBrush
 from PySide6.QtWidgets import (QGridLayout, QLabel, QHBoxLayout, QPushButton, QSizePolicy, QSlider, QWidget, QLineEdit,
                                QTableWidget, QHeaderView, QTableWidgetItem, QAbstractItemView, QStatusBar, QSpinBox,
-                               QAbstractSpinBox, QFrame)
-# from videoAnalysis_ui import UiMainWindow
+                               QAbstractSpinBox, QFrame, QProgressBar)
+
 import cv2  # via opencv-python AND opencv-contrib-python (for other trackers)
 import numpy as np
 import pandas as pd  # for exporting the trial times
-import subprocess
+import subprocess  # for retrieving video original audio fs
+import json  # for retrieving video original audio fs
 import os
 # import av  # for extracting audio from video - TOO SLOW, optimized for reading small pieces but not bulk
 from moviepy import VideoFileClip
 import pyqtgraph as pg  # for graphing the audio
+# import re  # parsing ffmpeg output for progress
 
 
 # Note: to build the exe, pyinstaller is required. Once installed, go to Windows terminal, navigate to folder with
@@ -54,13 +56,14 @@ class UiMainWindow(object):
 
     def __init__(self):
         self.centralwidget = None
+        self.progressBar = None
         self.controlGridLayout = None
 
         self.fileLayout = None
         self.pathLabel = None
         self.loadVideoButton = None
         # self.pathText = None
-        
+
         self.videoFrame = None
         self.audioFrame = None
 
@@ -96,7 +99,6 @@ class UiMainWindow(object):
         self.statusbar = None
 
     def setup_ui(self, mainwindow):
-
         # region Formatting templates
         # Text formatting
         font10 = QFont()
@@ -179,6 +181,12 @@ class UiMainWindow(object):
         self.centralwidget.setObjectName(u"centralwidget")
 
         self.statusbar = QStatusBar()
+
+        self.progressBar = QProgressBar(self.centralwidget)
+        self.progressBar.setMinimum(0)
+        self.progressBar.setMaximum(100)
+        self.progressBar.setValue(0)  # Initial value
+        self.statusbar.addPermanentWidget(self.progressBar)
         mainwindow.setStatusBar(self.statusbar)
 
         self.controlGridLayout = QGridLayout(self.centralwidget)
@@ -431,7 +439,7 @@ class UiMainWindow(object):
 
     def retranslate_ui(self, main_window):
         main_window.setWindowTitle(QCoreApplication.translate("mainwindow", u"mainwindow", None))
-        self.pathLabel.setText(QCoreApplication.translate("mainwindow", u"File", None))
+        self.pathLabel.setText(QCoreApplication.translate("mainwindow", u"", None))
         self.loadVideoButton.setText(QCoreApplication.translate("mainwindow", u"Load Video", None))
         self.boundingLeftLabel.setText(QCoreApplication.translate("mainwindow", u"Left", None))
         self.boundingLeftSpinBox.setValue(0)
@@ -454,12 +462,110 @@ class UiMainWindow(object):
     # retranslateUi
 
 
+def get_audio_fs(video_path):
+    """Moviepy does not properly return the audio sample rate - instead it returns the resampled rate, which
+    usually defaults to 44.1kHz.  This process gets the actual sample rate, although it is somewhat complex"""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate",
+            "-of", "json",
+            video_path
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    info = json.loads(result.stdout)
+    return int(info['streams'][0]['sample_rate'])
+
+
+class FFmpegClipExporter(QThread):
+    """With assistance from ChatGPT. Using filter_complex in ffmpeg to split multiple, cropped clips from a single
+    video without reinitializing ffmpeg each time"""
+    progress = Signal(str)  # To send status updates to UI
+    finished = Signal(bool)  # True if success, False if error
+
+    def __init__(self, input_path, clip_times, crop, output_paths, parent=None):
+        super().__init__(parent)
+        self.input_path = input_path
+        self.clip_times = clip_times  # list of (start, end) in seconds
+        self.crop = crop              # dict: {'w':640, 'h':480, 'x':100, 'y':50}
+        self.output_paths = output_paths  # list of output filenames
+        self.process = None
+
+    def run(self):
+        self.process = QProcess()
+        self.process.setProcessChannelMode(QProcess.MergedChannels)
+        self.process.readyReadStandardError.connect(self.handle_stderr)
+        self.process.finished.connect(self.handle_finished)
+
+        args = self.build_ffmpeg_args()
+        self.process.start("ffmpeg", args)
+        self.exec()  # Enters a nested event loop, keeps thread alive
+
+    def handle_stderr(self):
+        data = self.process.readAllStandardError().data().decode()
+        for line in data.splitlines():
+            if "frame=" in line or "time=" in line:
+                self.progress.emit(line.strip())
+
+    def handle_finished(self):
+        success = (self.process.exitStatus() == QProcess.NormalExit and self.process.exitCode() == 0)
+        self.finished.emit(success)
+        self.quit()  # Exit thread event loop
+
+    def build_ffmpeg_args(self):
+        crop_str = f"crop={self.crop['w']}:{self.crop['h']}:{self.crop['x']}:{self.crop['y']}"
+        num_clips = len(self.clip_times)
+
+        # Build filter_complex string
+        filter_parts = [
+            f"[0:v]{crop_str},split={num_clips}" + ''.join(f"[v{i}]" for i in range(num_clips)),
+            f"[0:a]asplit={num_clips}" + ''.join(f"[a{i}]" for i in range(num_clips)),
+        ]
+
+        for i, (start, end) in enumerate(self.clip_times):
+            filter_parts += [
+                f"[v{i}]trim=start={start}:end={end},setpts=PTS-STARTPTS[v{i}out]",
+                f"[a{i}]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{i}out]"
+            ]
+
+        filter_complex = "; ".join(filter_parts)
+
+        args = [
+            "-y",  # Overwrite output
+            "-i", self.input_path,
+            "-filter_complex", filter_complex,
+        ]
+
+        for i, out in enumerate(self.output_paths):
+            args += ["-map", f"[v{i}out]", "-map", f"[a{i}out]", out]
+
+        return args
+
+
+def get_seconds_from_time(time_str):
+    time = time_str.split(":")
+    if len(time) > 2:
+        # timestamp includes hours
+        nSec = float(time[0]) * 60 * 60 + float(time[1]) * 60 + float(time[2])
+    else:
+        # timestamp is just minutes and seconds
+        nSec = float(time[0]) * 60 + float(time[1])
+
+    return nSec
+
+
 class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
 
     def __init__(self):
         super(MainWindow, self).__init__()
         self.setup_ui(self)
         self.setWindowTitle("Bobbing Trial Splitting")
+
+        self.process = QProcess(self)  # for running ffmpeg without blocking the ui input
 
         self.loadVideoButton.clicked.connect(lambda: self.load_video())
         self.boundingLeftSpinBox.editingFinished.connect(self.update_bounding_box)
@@ -481,6 +587,9 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         self.setEndButton.clicked.connect(lambda: self.set_trial_end())
         self.loadParamButton.clicked.connect(lambda: self.load_settings())
         self.saveTraceButton.clicked.connect(lambda: self.split_video())
+        # self.process.readyReadStandardOutput.connect(self.read_stdout)
+        # self.process.readyReadStandardError.connect(self.read_stderr)
+        # self.process.finished.connect(self.process_finished)
 
         # table setup
         self.trialMarkerTable.setColumnCount(3)
@@ -507,7 +616,6 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         self.setEndButton.setEnabled(False)
 
         # self.videoFrame.installEventFilter(self)
-
         self.thread = None
 
         # video stats
@@ -541,6 +649,15 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         self.audioTrackerLine = None
 
         self.user_dragging = False
+
+        self.trialdf = None
+        self.folderPath = None
+        self.currRow = None
+        self.nFrames = None
+
+        self.progressBar.hide()
+
+        self.exporter = None
 
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', 'k')
@@ -646,14 +763,15 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 #             audio_frames.append(frame.to_ndarray())
                 # waveform = np.concatenate(audio_frames, axis=1)
                 videoClip = VideoFileClip(self.videoPath)
-                fs = videoClip.audio.fps
+                fs = get_audio_fs(self.videoPath)
+                print(f'Audio sample rate (Hz): {fs}')
                 waveform = videoClip.audio.to_soundarray(fps=fs)
                 waveform = waveform.mean(axis=1)  # convert from stereo to mono
                 dsFactor = 10
                 self.audioWaveform = waveform[::dsFactor]  # downsample for plotting efficacy
 
                 nSamp = len(self.audioWaveform)
-                time = np.linspace(0, nSamp/(fs/dsFactor), num=nSamp, endpoint=False)
+                time = np.linspace(0, nSamp / (fs / dsFactor), num=nSamp, endpoint=False)
                 self.audioWavePlot = self.audioFrame.plot(time, self.audioWaveform)
 
                 self.audioTrackerLine = pg.InfiniteLine(0, pen=pg.mkPen('y', width=1))
@@ -666,7 +784,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 return True
 
     def load_settings(self):
-        fileName = QtWidgets.QFileDialog.getOpenFileName(self, 'Open Settings File')
+        fileName = QtWidgets.QFileDialog.getOpenFileName(self, 'Open Settings File', filter="*.csv")
         if fileName[0]:
             fileName = fileName[0]
             settingsdf = pd.read_csv(fileName)
@@ -694,10 +812,9 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 for i in range(len(trialdf)):
                     # lastTrial = self.trialCount - 1
                     self.trialMarkerTable.insertRow(i)
-                    # trialNumItem = QTableWidgetItem(Qt.DisplayRole, trialdf[['Trial']].iloc[i])
-                    # trialNumItem.setData(Qt.DisplayRole, trialdf[['Trial']].iloc[i])
-                    self.trialMarkerTable.setItem(i, 0, QTableWidgetItem(
-                        Qt.DisplayRole, trialdf[['Trial']].iloc[i].values[0]))
+                    trialNumItem = QTableWidgetItem(Qt.DisplayRole, str(int(trialdf[['Trial']].iloc[i].values[0])))
+                    trialNumItem.setData(Qt.DisplayRole, str(int(trialdf[['Trial']].iloc[i].values[0])))
+                    self.trialMarkerTable.setItem(i, 0, trialNumItem)
                     # fill remaining cells with an actual item
                     self.trialMarkerTable.setItem(i, 1, QTableWidgetItem(trialdf[['Start']].iloc[i].values[0]))
                     self.trialMarkerTable.setItem(i, 2, QTableWidgetItem(trialdf[['End']].iloc[i].values[0]))
@@ -716,7 +833,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         for i, line in enumerate(boxInstr):
             textSize = cv2.getTextSize(line, font, .8, 2)[0]
             textX = textSize[1]  # (frameCopy.shape[1] - textSize[0]) / 2
-            textY = textSize[1] * 2 * (i+1)
+            textY = textSize[1] * 2 * (i + 1)
             textOrg = (textX, textY)
             cv2.putText(frameCopy, line, textOrg,
                         font, 1, (0, 0, 255), 2)
@@ -789,7 +906,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         # print(row)
 
     def trial_add(self):
-        lastTrial = self.trialCount-1
+        lastTrial = self.trialCount - 1
         self.trialMarkerTable.insertRow(lastTrial)
         trialNumItem = QTableWidgetItem()
         trialNumItem.setData(Qt.DisplayRole, self.trialCount)
@@ -804,8 +921,8 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
             self.trialMarkerTable.removeRow(self.trial)
             self.trialCount -= 1
             # renumber trials after deletion
-            for row in range(self.trialCount-1):  # trialCount - 1 because trialCount is not 0-indexed
-                self.trialMarkerTable.item(row, 0).setData(Qt.DisplayRole, row+1)
+            for row in range(self.trialCount - 1):  # trialCount - 1 because trialCount is not 0-indexed
+                self.trialMarkerTable.item(row, 0).setData(Qt.DisplayRole, row + 1)
 
     def video_play(self):
         # update the play button
@@ -918,6 +1035,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
             self.audioTrackerLine.setPos(newTS)
 
     def update_timestamp(self, targetFrame):
+        """Update value of timeStartTextEdit based on frame number, without triggering the signal"""
         # targetFrame = self.trackingSlider.value()
         newTimeStamp = self.get_time_from_frame(targetFrame)
         self.timeStartTextEdit.blockSignals(True)
@@ -929,7 +1047,7 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         """Updates the image_label with a new opencv image"""
         if all(x > 0 for x in self.bbox):
             # self.bboxPainter.drawRect(self.cropX, self.cropY, self.cropWidth, self.cropHeight)
-            cv2.rectangle(cv_img, (self.cropX, self.cropY), (self.cropX + self.cropWidth, self.cropY+self.cropHeight),
+            cv2.rectangle(cv_img, (self.cropX, self.cropY), (self.cropX + self.cropWidth, self.cropY + self.cropHeight),
                           (255, 0, 0), 3)
 
         self.frameCurrent = cv_img
@@ -949,8 +1067,8 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         return QtGui.QPixmap.fromImage(p)
 
     def get_time_from_frame(self, framenumber):
-        # return time as string (with commented lines for returning as datetime)
-        nSecondsRaw = framenumber/self.videoFrameRate
+        """return time as string (with commented lines for returning as datetime)"""
+        nSecondsRaw = framenumber / self.videoFrameRate
         nMin, nSec = divmod(nSecondsRaw, 60)
         nHour, nMin = divmod(nMin, 60)
         # nMicro = round((nSec % 1)*10**6)
@@ -964,79 +1082,219 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
         brushHighlight = QBrush(QColor('yellow'))
         brushReg = QBrush(QColor('white'))
 
-        trialCount = self.trialMarkerTable.rowCount()
+        self.trialCount = self.trialMarkerTable.rowCount()
         # Validate that all trials have start and end before trying to clip/crop them
         trialsValid = True
-        for row in range(trialCount):
+        for row in range(self.trialCount):
             trialNItem = self.trialMarkerTable.item(row, 0)
             startItem = self.trialMarkerTable.item(row, 1)
             endItem = self.trialMarkerTable.item(row, 2)
             if not trialNItem.text():
-                # self.statusbar.showMessage(f'Row {row + 1} missing trial number')
                 trialsValid = False
                 trialNItem.setBackground(brushHighlight)
             else:
                 trialNItem.setBackground(brushReg)
             if not startItem.text():
-                # self.statusbar.showMessage(f'Row {row+1} missing start time')
                 trialsValid = False
                 startItem.setBackground(brushHighlight)
             else:
                 startItem.setBackground(brushReg)
             if not endItem.text():
-                # self.statusbar.showMessage(f'Row {row+1} missing end time')
                 trialsValid = False
                 endItem.setBackground(brushHighlight)
             else:
                 endItem.setBackground(brushReg)
 
         if trialsValid:
-            folderPath = QtWidgets.QFileDialog.getExistingDirectory(self, 'Save to Folder')
-            if folderPath:
+            self.folderPath = QtWidgets.QFileDialog.getExistingDirectory(self, 'Save to Folder')
+            if self.folderPath:
                 # loop through trials and export cropped clips
                 columnHeaders = ['Trial', 'Start', 'End']
-                trialdf = pd.DataFrame(columns=columnHeaders, index=range(trialCount))
-                for row in range(trialCount):
-                    trialN = self.trialMarkerTable.item(row, 0).text()
-                    start = self.trialMarkerTable.item(row, 1).text()
-                    end = self.trialMarkerTable.item(row, 2).text()
-                    trialdf.loc[row, 'Trial'] = trialN
-                    trialdf[row, 'Start'] = start
-                    trialdf[row, 'End'] = end
-
-                    currFileName = self.videoName + "_t" + trialN + self.videoExt
-                    output_path = os.path.join(folderPath, currFileName)
-
-                    if all(x > 0 for x in self.bbox):
-                        # video is cropped
-                        # TODO: add verification that ffmpeg is installed
-                        command = (
-                            f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
-                            f"-filter:v crop={self.cropWidth}:{self.cropHeight}:{self.cropX}:{self.cropY} "
-                            f'-c:a copy "{output_path}"'
-                        )
-                    else:
-                        command = (
-                            f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
-                            f'-c:a copy "{output_path}"'
-                        )
-                    self.statusbar.showMessage(f'Clipping trial {trialN} of {trialCount}')
-                    print(f'Clipping trial {trialN} of {trialCount}')
-                    subprocess.call(command, shell=True)
-                self.statusbar.showMessage(f'')
-
-                # cropping box
+                self.trialdf = pd.DataFrame(columns=columnHeaders, index=range(self.trialCount))
+                # First export settings for future reference (and in case of a crash before it finishes)
                 bboxdf = pd.DataFrame({'cropX': [self.cropX], 'cropY': [self.cropY],
-                                       'cropWidth': [self.cropWidth], 'cropHeight': [self.cropHeight]})
-                outdf = pd.concat([trialdf, bboxdf], ignore_index=True)
+                                       'cropWidth': [self.cropWidth], 'cropHeight': [self.cropHeight],
+                                       'Video': [self.videoPath]})
+                for row in range(self.trialCount):
+                    self.trialdf.loc[row, 'Trial'] = self.trialMarkerTable.item(row, 0).text()
+                    self.trialdf.loc[row, 'Start'] = self.trialMarkerTable.item(row, 1).text()
+                    self.trialdf.loc[row, 'End'] = self.trialMarkerTable.item(row, 2).text()
+
+                # add the bbox values as the last row, in separate columns
+                outdf = pd.concat([self.trialdf, bboxdf], ignore_index=True)
 
                 # export trial times and names
                 textFileName = self.videoName + "_trialTimes.csv"
-                output_path = os.path.join(folderPath, textFileName)
+                output_path = os.path.join(self.folderPath, textFileName)
                 outdf.to_csv(output_path, index=False)
+
+                self.trackingSlider.setEnabled(False)
+                self.playVideoButton.setEnabled(False)
+                self.boundingLeftSpinBox.setEnabled(False)
+                self.boundingRightSpinBox.setEnabled(False)
+                self.boundingTopSpinBox.setEnabled(False)
+                self.boundingBottomSpinBox.setEnabled(False)
+                self.boundingBoxButton.setEnabled(False)
+                self.timeStartTextEdit.setEnabled(False)
+                self.saveTraceButton.setEnabled(False)
+                self.addTrialButton.setEnabled(False)
+                self.remTrialButton.setEnabled(False)
+                self.setStartButton.setEnabled(False)
+                self.setEndButton.setEnabled(False)
+                self.loadVideoButton.setEnabled(False)
+                self.loadParamButton.setEnabled(False)
+                
+                # start clipping
+                # self.progressBar.show()
+                self.currRow = 0
+                self.start_clip_video()
 
         else:
             self.statusbar.showMessage(f'Missing trial data')
+
+    # def read_stdout(self):
+    #     output = self.process.readAllStandardOutput().data().decode()
+    #     for line in output.splitlines():
+    #         match = re.search(r"frame=\s*(\d+)", line)
+    #         if match:
+    #             frame = match.group(1)
+    #             self.statusbar.showMessage(f"Clipping trial {self.currRow + 1} of {self.trialCount}")
+    #             progress = float(frame) / float(self.nFrames)
+    #             self.progressBar.setValue(progress)
+    #
+    # def read_stderr(self):
+    #     output = self.process.readAllStandardError().data().decode()
+    #     for line in output.splitlines():
+    #         match = re.search(r"frame=\s*(\d+)", line)
+    #         if match:
+    #             frame = match.group(1)
+    #             print(frame)
+    #             self.statusbar.showMessage(f"Clipping trial {self.currRow + 1} of {self.trialCount}")
+    #             progress = float(frame) / float(self.nFrames)
+    #             self.progressBar.setValue(progress)
+    #
+    # def process_finished(self):
+    #     self.statusbar.showMessage(f"Finished trial {self.currRow + 1} of {self.trialCount}.")
+    #     self.currRow += 1
+    #     self.start_clip_video()
+
+    def update_status(self, message):
+        self.statusbar.showMessage(message)
+
+    def clipping_finished(self, success):
+        msg = "Export complete!" if success else "Export failed!"
+        self.statusbar.showMessage(msg)
+
+        self.progressBar.hide()
+        self.trackingSlider.setEnabled(True)
+        self.playVideoButton.setEnabled(True)
+        self.boundingLeftSpinBox.setEnabled(True)
+        self.boundingRightSpinBox.setEnabled(True)
+        self.boundingTopSpinBox.setEnabled(True)
+        self.boundingBottomSpinBox.setEnabled(True)
+        self.boundingBoxButton.setEnabled(True)
+        self.timeStartTextEdit.setEnabled(True)
+        self.saveTraceButton.setEnabled(True)
+        self.addTrialButton.setEnabled(True)
+        self.remTrialButton.setEnabled(True)
+        self.setStartButton.setEnabled(True)
+        self.setEndButton.setEnabled(True)
+        self.loadVideoButton.setEnabled(True)
+        self.loadParamButton.setEnabled(True)
+
+    def start_clip_video(self):
+        clipTimes = []
+        outputPaths = []
+        for i in range(self.trialCount):
+            trialN = self.trialdf.loc[i, 'Trial']
+            start = get_seconds_from_time(self.trialdf.loc[i, 'Start'])
+            end = get_seconds_from_time(self.trialdf.loc[i, 'End'])
+            clipTimes.append((start, end))
+
+            currFileName = self.videoName + "_t" + trialN + self.videoExt
+            outputPaths.append(os.path.join(self.folderPath, currFileName))
+
+        crop = {'w': self.cropWidth, 'h': self.cropHeight, 'x': self.cropX, 'y': self.cropY}
+
+        self.exporter = FFmpegClipExporter(self.videoPath, clipTimes, crop, outputPaths)
+        self.exporter.progress.connect(self.update_status)
+        self.exporter.finished.connect(self.clipping_finished)
+        self.statusbar.showMessage('Exporting... This may take awhile, and can be resource-intensive!')
+        self.exporter.start()
+        # if self.currRow >= self.trialCount:
+        #     print(f'Finished.')
+        #     self.statusbar.showMessage('Finished!')
+        #     self.progressBar.hide()
+        #     self.trackingSlider.setEnabled(True)
+        #     self.playVideoButton.setEnabled(True)
+        #     self.boundingLeftSpinBox.setEnabled(True)
+        #     self.boundingRightSpinBox.setEnabled(True)
+        #     self.boundingTopSpinBox.setEnabled(True)
+        #     self.boundingBottomSpinBox.setEnabled(True)
+        #     self.boundingBoxButton.setEnabled(True)
+        #     self.timeStartTextEdit.setEnabled(True)
+        #     self.saveTraceButton.setEnabled(True)
+        #     self.addTrialButton.setEnabled(True)
+        #     self.remTrialButton.setEnabled(True)
+        #     self.setStartButton.setEnabled(True)
+        #     self.setEndButton.setEnabled(True)
+        #     self.loadVideoButton.setEnabled(True)
+        #     self.loadParamButton.setEnabled(True)
+        #
+        #     return
+        #
+        # trialN = self.trialdf.loc[self.currRow, 'Trial']
+        # start = self.trialdf.loc[self.currRow, 'Start']
+        # end = self.trialdf.loc[self.currRow, 'End']
+        #
+        # currFileName = self.videoName + "_t" + trialN + self.videoExt
+        # output_path = os.path.join(self.folderPath, currFileName)
+        #
+        # # get number of frames for progress bar
+        # startTS = start.split(":")
+        # startSec = float(startTS[0]) * 60 * 60 + float(startTS[1]) * 60 + float(startTS[2])
+        # endTS = end.split(":")
+        # endSec = float(endTS[0]) * 60 * 60 + float(endTS[1]) * 60 + float(endTS[2])
+        #
+        # self.nFrames = int(round((endSec - startSec) * self.videoFrameRate, 0))
+        #
+        # if all(x > 0 for x in self.bbox):
+        #     # video is cropped
+        #     # command = (
+        #     #     f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
+        #     #     f"-filter:v crop={self.cropWidth}:{self.cropHeight}:{self.cropX}:{self.cropY} "
+        #     #     f'-c:a copy "{output_path}"'
+        #     # )
+        #     command = [
+        #         "-hide_banner",
+        #         "-loglevel", "info",
+        #         '-progress', 'pipe:2',
+        #         '-i', self.videoPath,
+        #         "-ss", start,
+        #         "-to", end,
+        #         '-filter:v', f'crop={self.cropWidth}:{self.cropHeight}:{self.cropX}:{self.cropY}',
+        #         '-c:a', 'copy',
+        #         output_path
+        #     ]
+        # else:
+        #     # command = (
+        #     #     f'ffmpeg -n -i "{self.videoPath}" -ss {start} -to {end} '
+        #     #     f'-c:a copy "{output_path}"'
+        #     # )
+        #     command = [
+        #         "-hide_banner",
+        #         "-loglevel", "info",
+        #         '-progress', 'pipe:2',
+        #         "-i", self.videoPath,
+        #         "-ss", start,
+        #         "-to", end,
+        #         "-c:a copy", output_path
+        #     ]
+        # print(f'Clipping trial {trialN} of {self.trialCount}')
+        # self.process.start('ffmpeg', command)
+        # self.statusbar.showMessage(f'Preparing trial {trialN} of {self.trialCount} (this may take awhile)')
+        #
+        # # subprocess.call(command, shell=True)
 
 
 app = QtWidgets.QApplication(sys.argv)
