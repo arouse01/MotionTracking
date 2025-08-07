@@ -6,14 +6,12 @@ from PySide6.QtWidgets import (QGridLayout, QLabel, QHBoxLayout, QPushButton, QS
                                QTableWidget, QHeaderView, QTableWidgetItem, QAbstractItemView, QStatusBar, QSpinBox,
                                QAbstractSpinBox, QFrame, QMessageBox)
 
-import cv2  # via opencv-python AND opencv-contrib-python (for other trackers)
+import cv2  # via opencv-python
 import numpy as np
 import pandas as pd  # for exporting the trial times
 import subprocess  # for retrieving video original audio fs
 import json  # for retrieving video original audio fs
 import os
-# import av  # for extracting audio from video - TOO SLOW, optimized for reading small pieces but not bulk
-from moviepy import VideoFileClip
 import pyqtgraph as pg  # for graphing the audio
 # import re  # parsing ffmpeg output for progress
 
@@ -80,6 +78,51 @@ def get_audio_fs(video_path):
     )
     info = json.loads(result.stdout)
     return int(info['streams'][0]['sample_rate'])
+
+
+def extract_audio(video_path):
+    """Extract the audio from the video file without moviepy, thereby reducing the package requirement for the script"""
+
+    # Get stream info
+    mapping = {
+        's16': np.int16,
+        's32': np.int32,
+        'flt': np.float32,
+        'dbl': np.float64,
+        'f32': np.float32
+    }
+
+    result = subprocess.run([
+        "ffprobe", "-v", "error", "-select_streams", "a:0",
+        "-show_entries", "stream=channels,sample_rate,sample_fmt",
+        "-of", "json", video_path
+    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    info = json.loads(result.stdout)
+    stream = info['streams'][0]
+    nChan = stream['channels']
+    fs = int(stream['sample_rate'])
+    fmt = stream['sample_fmt']
+    if fmt == 'fltp':
+        fmt = 'f32'
+
+    fmtdtype = mapping[fmt]
+
+    cmd = [
+        "ffmpeg", "-i", video_path,
+        "-f", fmt + "le",
+        "-acodec", f"pcm_{fmt}le",
+        "-vn", "-hide_banner", "-loglevel", "error",
+        "-"
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    raw = proc.stdout.read()
+    audio = np.frombuffer(raw, dtype=fmtdtype)
+
+    # Reshape to (n_samples, n_channels)
+    audio = audio.reshape((-1, nChan))
+    return audio, fs
 
 
 class VideoThread(QThread):
@@ -249,7 +292,7 @@ class UiMainWindow(object):
         self.controlGridLayout = QGridLayout(self.centralwidget)
         self.controlGridLayout.setObjectName(u"controlGridLayout")
 
-        self.fileLayout = QHBoxLayout(self.centralwidget)
+        self.fileLayout = QHBoxLayout()
 
         self.loadVideoButton = QPushButton(self.centralwidget)
         self.loadVideoButton.setObjectName(u"loadButton")
@@ -388,7 +431,7 @@ class UiMainWindow(object):
         self.trialMarkerTable.setMaximumSize(QSize(1000, 1000))
         self.controlGridLayout.addWidget(self.trialMarkerTable, 2, 1, 2, 2)
 
-        self.trackingLayout = QHBoxLayout(self.centralwidget)
+        self.trackingLayout = QHBoxLayout()
 
         self.timeStartTextEdit = QLineEdit(self.centralwidget)
         self.timeStartTextEdit.setObjectName(u"startTimestampLabel")
@@ -413,7 +456,7 @@ class UiMainWindow(object):
 
         self.controlGridLayout.addLayout(self.trackingLayout, 4, 0, 1, 1)
 
-        self.settingLayout = QHBoxLayout(self.centralwidget)
+        self.settingLayout = QHBoxLayout()
 
         self.playVideoButton = QPushButton(self.centralwidget)
         self.playVideoButton.setObjectName(u"playVideoButton")
@@ -762,17 +805,22 @@ class MainWindow(QtWidgets.QMainWindow, UiMainWindow):
                 self.boundingBottomSpinBox.setMaximum(self.vidHeight)
 
                 # display audio
-                videoClip = VideoFileClip(self.videoPath)
-                fs = get_audio_fs(self.videoPath)
+                # fs = get_audio_fs(self.videoPath)
+
+                # # moviepy
+                # videoClip = VideoFileClip(self.videoPath)
+                # waveform = videoClip.audio.to_soundarray(fps=fs)
+
+                # ffmpeg
+                waveform, fs = extract_audio(self.videoPath)
                 print(f'Audio sample rate (Hz): {fs}')
-                waveform = videoClip.audio.to_soundarray(fps=fs)
                 waveform = waveform.mean(axis=1)  # convert from stereo to mono
                 dsFactor = 10
                 self.audioWaveform = waveform[::dsFactor]  # downsample for plotting efficacy
 
                 nSamp = len(self.audioWaveform)
                 time = np.linspace(0, nSamp / (fs / dsFactor), num=nSamp, endpoint=False)
-                self.audioWavePlot = self.audioFrame.plot(time, self.audioWaveform)
+                self.audioWavePlot = self.audioFrame.plot(time, self.audioWaveform, pen=pg.mkPen('w', width=1))
 
                 self.audioTrackerLine = pg.InfiniteLine(0, pen=pg.mkPen('y', width=1))
                 self.audioFrame.addItem(self.audioTrackerLine)
