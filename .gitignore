@@ -3,3 +3,4 @@ modelTrain.py
 splitter.ui
 build/*
 dist/*
+*.spec
